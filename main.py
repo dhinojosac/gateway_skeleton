@@ -1,73 +1,53 @@
 #!/usr/bin/env python
-import socket
+import sys, os
+import logging
+import signal
 import threading
-import sys
-from datetime import datetime, timedelta
 import time
-import signal 
+import threadingserver as ts
+from configlog import configLogging
 
-# SIGNAL HANDLERS
-def service_shutdown(signum, frame):
-    print('Caught signal %d' % signum)
-    raise ServiceExit
+# Set up logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
-class Job(threading.Thread):
- 
-    def __init__(self):
-        threading.Thread.__init__(self)
- 
-        # The shutdown_flag is a threading.Event object that
-        # indicates whether the thread should be terminated.
-        self.shutdown_flag = threading.Event()
- 
-        # ... Other thread setup code here ...
- 
-    def run(self):
-        print('Thread #%s started\n' % self.ident)
- 
-        while not self.shutdown_flag.is_set():
-            # ... Job code here ...
-            time.sleep(0.5)
- 
-        # ... Clean shutdown code here ...
-        print('Thread #%s stopped\n' % self.ident)
+#config log and his rotation
+configLogging(logger)
 
-
-class ServiceExit(Exception):
-    """
-    Custom exception which is used to trigger the clean exit
-    of all running threads and the main program.
-    """
-    pass
-    
+def service_shutdown(signal, frame):
+    logger.info("Gateway program shutdown")
 
 def main():
     # Register the signal handlers
     signal.signal(signal.SIGTERM, service_shutdown)
     signal.signal(signal.SIGINT, service_shutdown)
 
-    print('Starting main program')
+    logger.info("Gateway program start")
 
-    # Start the job threads
+     # Create the server, binding to localhost on port SERVER_PORT
+    server   = ts.ThreadedTCPServer((ts.SERVER_HOST, ts.SERVER_PORT), ts.ThreadedTCPRequestHandler) 
+    ip, port = server.server_address # retrieve ip address 
+ 
+    # Create a thread and activate the server; this will keep running until you
+    # interrupt the program with Ctrl-C
+    server_thread = threading.Thread(target=server.serve_forever) 
+
+    # Exit the server thread when the main thread exits 
+    server_thread.daemon = True  # Don't hang on exit
+    server_thread.start() 
+
+    logger.info("Server loop running on thread: %s in %s:%s"  % (server_thread.name,ip,port) )
+
+    # test while for serve forever
     try:
-        j1 = Job()
-        j2 = Job()
-        j1.start()
-        j2.start()       
-
-        # Keep the main thread running, otherwise signals are ignored.
         while True:
-            time.sleep(0.5)
-
-    except ServiceExit:
-        # Terminate the running threads.
-        # Set the shutdown flag on each thread to trigger a clean shutdown of each thread.
-        j1.shutdown_flag.set()
-        j2.shutdown_flag.set()
-        # Wait for the threads to close...
-        j1.join()
-        j2.join()
-    print "Exiting main program"
+            time.sleep(0.1)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception, e:
+        logger.error('Error %s' %e)
+        # Server cleanup 
+        server.shutdown() 
 
 
 if __name__ == '__main__':
